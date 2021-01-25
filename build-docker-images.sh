@@ -34,7 +34,8 @@ function build_one()
 # docker rmi $(cat Dockerfile.gpu | grep FROM | awk '{print $2}') || true
 
 # build for cpu and gpu
-build_one 3.7 cpu
+# build_one 3.7 cpu
+build_one 3.7 ray.gpu
 # build_one 3.7 gpu
 
 # print recent images

@@ -42,6 +42,9 @@ class RayHostDiscovery(HostDiscovery):
         self.use_gpu = use_gpu
         self.cpus_per_slot = cpus_per_slot
         self.gpus_per_slot = gpus_per_slot
+        self.timeout_s = 10
+        self._actor_handles = {}
+        self._blacklist = []
         logger.debug(f"Discovery started with {cpus_per_slot} CPU / "
                      f"{gpus_per_slot} GPU per slot.")
 
@@ -51,18 +54,47 @@ class RayHostDiscovery(HostDiscovery):
         host_mapping = {}
         for node in alive_nodes:
             hostname = node["NodeManagerAddress"]
+            if hostname in self._blacklist:
+                continue
             resources = node["Resources"]
             slots = resources.get("CPU", 0) // self.cpus_per_slot
             if self.use_gpu:
                 gpu_slots = resources.get("GPU", 0) // self.gpus_per_slot
                 slots = min(slots, gpu_slots)
-            host_mapping[hostname] = int(math.ceil(slots))
+            slots = int(math.ceil(slots))
+            if slots:
+                host_mapping[hostname] = slots
+
+        self.ping_actors()
 
         if host_mapping and sum(host_mapping.values()) == 0:
             logger.info(f"Detected {len(host_mapping)} hosts, but no hosts "
                         "have available slots.")
             logger.debug(f"Alive nodes: {alive_nodes}")
         return host_mapping
+
+    def ping_actors(self):
+        def get_ip(_):
+            import socket
+            return socket.gethostbyname(socket.gethostname())
+        pings = {a.execute.remote(get_ip): slot for slot, a in self._actor_handles.items()}
+        start = time.time()
+        while time.time() - start < self.timeout_s and pings:
+            ready, _ = ray.wait(list(pings), timeout=0.5)
+            if ready:
+                ready = ready[0]
+                slot = pings.pop(ready)
+                try:
+                    x = ray.get(ready, timeout=1)
+                    print(f'finished {x}')
+                except Exception as exc:
+                    print(f"NO! Blacklisted {slot}")
+                    logger.error(str(exc))
+                    self._blacklist.append(slot)
+                    self._actor_handles.pop(slot)
+
+    def register_actor(self, actor, slot_info):
+        self._actor_handles[slot_info.hostname] = actor
 
 
 class ElasticRayExecutor:
@@ -216,9 +248,12 @@ class ElasticRayExecutor:
             all_host_names=current_hosts.host_assignment_order,
         )
         logger.debug("[ray] getting driver IP")
-        server_ip = network.get_driver_ip(nics)
+        # server_ip = network.get_driver_ip(nics)
+        import socket
+        server_ip = socket.gethostbyname(socket.gethostname())
         self.run_env_vars = create_run_env_vars(
             server_ip, nics, global_rendezv_port, elastic=True)
+        logger.info(f"[ray] {self.run_env_vars}")
 
     def _create_resources(self, hostname: str):
         resources = dict(
@@ -230,6 +265,7 @@ class ElasticRayExecutor:
     def _create_remote_worker(self, slot_info, worker_env_vars):
         hostname = slot_info.hostname
         loaded_worker_cls = self.remote_worker_cls.options(
+            max_concurrency=2,  # to ping
             **self._create_resources(hostname))
 
         worker = loaded_worker_cls.remote()
@@ -255,6 +291,10 @@ class ElasticRayExecutor:
 
         def worker_loop(slot_info, events):
             worker = self._create_remote_worker(slot_info, worker_env_vars)
+            self.settings.discovery.register_actor(worker, slot_info)
+            assignment_order = (
+                self.driver._get_host_assignments(self.driver._host_manager.current_hosts))
+            print("RETRIEVED ASSIGNMENT ORDER", assignment_order)
             future = worker.execute.remote(lambda _: worker_fn())
 
             result = None
@@ -271,9 +311,10 @@ class ElasticRayExecutor:
                         ray.kill(worker)
                         result = 1, time.time()
                 except Exception as e:
-                    logger.exception(str(e))
+                    logger.exception(f"{slot_info.hostname}:{e}")
                     # Fail
                     result = 1, time.time()
+            print("Worker routine is done!", slot_info)
             return result
 
         return worker_loop

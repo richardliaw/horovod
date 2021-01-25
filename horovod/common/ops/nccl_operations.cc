@@ -462,7 +462,7 @@ Status NCCLAllgather::Execute(std::vector<TensorTableEntry>& entries,
     for (size_t ec = 0; ec < entries.size(); ++ec) {
       delete[] entry_component_sizes[ec];
       delete[] entry_component_offsets[ec];
-    }   
+    }
     delete[] entry_component_sizes;
     delete[] entry_component_offsets;
     delete[] recvcounts;
