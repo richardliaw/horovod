@@ -14,8 +14,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // =============================================================================
-
+#include <iostream>
 #include "nccl_operations.h"
+
 
 namespace horovod {
 namespace common {
@@ -50,11 +51,12 @@ void NCCLContext::ErrorCheck(std::string op_name, ncclResult_t nccl_result, nccl
 }
 
 void NCCLContext::ShutDown(){
-  for(auto it = nccl_comms.begin(); it != nccl_comms.end(); ++it) {
-    for (auto entry = it->begin(); entry != it->end(); ++entry) {
-      ncclCommDestroy(entry->second);
-    }
-  }
+  std::cout << "Shutdown skipped!" << std::endl;
+  // for(auto it = nccl_comms.begin(); it != nccl_comms.end(); ++it) {
+  //   for (auto entry = it->begin(); entry != it->end(); ++entry) {
+  //     ncclCommDestroy(entry->second);
+  //   }
+  // }
   nccl_comms.clear();
 }
 
