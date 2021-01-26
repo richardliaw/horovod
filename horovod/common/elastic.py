@@ -169,9 +169,6 @@ def run_fn(func, reset):
                     skip_sync = e.skip_sync
                 except Exception as e:
                     print(f"Got a crazy uncaught exception!!!!! {e}")
-                print("Waiting 10 seconds to reset.")
-                import time
-                time.sleep(10)
                 reset()
                 state.on_reset()
         finally:

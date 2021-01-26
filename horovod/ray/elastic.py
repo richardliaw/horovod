@@ -65,7 +65,7 @@ class RayHostDiscovery(HostDiscovery):
             if slots:
                 host_mapping[hostname] = slots
 
-        self.ping_actors()
+        # self.ping_actors()
 
         if host_mapping and sum(host_mapping.values()) == 0:
             logger.info(f"Detected {len(host_mapping)} hosts, but no hosts "
@@ -73,25 +73,25 @@ class RayHostDiscovery(HostDiscovery):
             logger.debug(f"Alive nodes: {alive_nodes}")
         return host_mapping
 
-    def ping_actors(self):
-        def get_ip(_):
-            import socket
-            return socket.gethostbyname(socket.gethostname())
-        pings = {a.execute.remote(get_ip): slot for slot, a in self._actor_handles.items()}
-        start = time.time()
-        while time.time() - start < self.timeout_s and pings:
-            ready, _ = ray.wait(list(pings), timeout=0.5)
-            if ready:
-                ready = ready[0]
-                slot = pings.pop(ready)
-                try:
-                    x = ray.get(ready, timeout=1)
-                    print(f'finished {x}')
-                except Exception as exc:
-                    print(f"NO! Blacklisted {slot}")
-                    logger.error(str(exc))
-                    self._blacklist.append(slot)
-                    self._actor_handles.pop(slot)
+    # def ping_actors(self):
+    #     def get_ip(_):
+    #         import socket
+    #         return socket.gethostbyname(socket.gethostname())
+    #     pings = {a.execute.remote(get_ip): slot for slot, a in self._actor_handles.items()}
+    #     start = time.time()
+    #     while time.time() - start < self.timeout_s and pings:
+    #         ready, _ = ray.wait(list(pings), timeout=0.5)
+    #         if ready:
+    #             ready = ready[0]
+    #             slot = pings.pop(ready)
+    #             try:
+    #                 x = ray.get(ready, timeout=1)
+    #                 print(f'finished {x}')
+    #             except Exception as exc:
+    #                 print(f"NO! Blacklisted {slot}")
+    #                 logger.error(str(exc))
+    #                 self._blacklist.append(slot)
+    #                 self._actor_handles.pop(slot)
 
     def register_actor(self, actor, slot_info):
         self._actor_handles[slot_info.hostname] = actor
