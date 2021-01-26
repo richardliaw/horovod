@@ -43,8 +43,6 @@ class RayHostDiscovery(HostDiscovery):
         self.cpus_per_slot = cpus_per_slot
         self.gpus_per_slot = gpus_per_slot
         self.timeout_s = 10
-        self._actor_handles = {}
-        self._blacklist = []
         logger.debug(f"Discovery started with {cpus_per_slot} CPU / "
                      f"{gpus_per_slot} GPU per slot.")
 
@@ -54,8 +52,6 @@ class RayHostDiscovery(HostDiscovery):
         host_mapping = {}
         for node in alive_nodes:
             hostname = node["NodeManagerAddress"]
-            if hostname in self._blacklist:
-                continue
             resources = node["Resources"]
             slots = resources.get("CPU", 0) // self.cpus_per_slot
             if self.use_gpu:
@@ -65,7 +61,6 @@ class RayHostDiscovery(HostDiscovery):
             if slots:
                 host_mapping[hostname] = slots
 
-        # self.ping_actors()
 
         if host_mapping and sum(host_mapping.values()) == 0:
             logger.info(f"Detected {len(host_mapping)} hosts, but no hosts "
@@ -73,25 +68,6 @@ class RayHostDiscovery(HostDiscovery):
             logger.debug(f"Alive nodes: {alive_nodes}")
         return host_mapping
 
-    # def ping_actors(self):
-    #     def get_ip(_):
-    #         import socket
-    #         return socket.gethostbyname(socket.gethostname())
-    #     pings = {a.execute.remote(get_ip): slot for slot, a in self._actor_handles.items()}
-    #     start = time.time()
-    #     while time.time() - start < self.timeout_s and pings:
-    #         ready, _ = ray.wait(list(pings), timeout=0.5)
-    #         if ready:
-    #             ready = ready[0]
-    #             slot = pings.pop(ready)
-    #             try:
-    #                 x = ray.get(ready, timeout=1)
-    #                 print(f'finished {x}')
-    #             except Exception as exc:
-    #                 print(f"NO! Blacklisted {slot}")
-    #                 logger.error(str(exc))
-    #                 self._blacklist.append(slot)
-    #                 self._actor_handles.pop(slot)
 
 class ElasticRayExecutor:
     """Executor for elastic jobs using Ray.
@@ -249,7 +225,7 @@ class ElasticRayExecutor:
         server_ip = socket.gethostbyname(socket.gethostname())
         self.run_env_vars = create_run_env_vars(
             server_ip, nics, global_rendezv_port, elastic=True)
-        logger.info(f"[ray] {self.run_env_vars}")
+
 
     def _create_resources(self, hostname: str):
         resources = dict(
@@ -261,7 +237,6 @@ class ElasticRayExecutor:
     def _create_remote_worker(self, slot_info, worker_env_vars):
         hostname = slot_info.hostname
         loaded_worker_cls = self.remote_worker_cls.options(
-            max_concurrency=2,  # to ping
             **self._create_resources(hostname))
 
         worker = loaded_worker_cls.remote()
@@ -306,7 +281,7 @@ class ElasticRayExecutor:
                     logger.exception(f"{slot_info.hostname}:{e}")
                     # Fail
                     result = 1, time.time()
-            print("Worker routine is done!", slot_info)
+            logger.debug(f"Worker ({slot_info}) routine is done!")
             return result
 
         return worker_loop

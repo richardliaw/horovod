@@ -167,8 +167,6 @@ def run_fn(func, reset):
                     skip_sync = False
                 except HostsUpdatedInterrupt as e:
                     skip_sync = e.skip_sync
-                except Exception as e:
-                    print(f"Got a crazy uncaught exception!!!!! {e}")
                 reset()
                 state.on_reset()
         finally:
