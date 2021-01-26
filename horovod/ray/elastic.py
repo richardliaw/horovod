@@ -93,10 +93,6 @@ class RayHostDiscovery(HostDiscovery):
     #                 self._blacklist.append(slot)
     #                 self._actor_handles.pop(slot)
 
-    def register_actor(self, actor, slot_info):
-        self._actor_handles[slot_info.hostname] = actor
-
-
 class ElasticRayExecutor:
     """Executor for elastic jobs using Ray.
 
@@ -291,10 +287,6 @@ class ElasticRayExecutor:
 
         def worker_loop(slot_info, events):
             worker = self._create_remote_worker(slot_info, worker_env_vars)
-            self.settings.discovery.register_actor(worker, slot_info)
-            assignment_order = (
-                self.driver._get_host_assignments(self.driver._host_manager.current_hosts))
-            print("RETRIEVED ASSIGNMENT ORDER", assignment_order)
             future = worker.execute.remote(lambda _: worker_fn())
 
             result = None
