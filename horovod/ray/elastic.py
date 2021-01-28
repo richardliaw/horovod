@@ -61,7 +61,6 @@ class RayHostDiscovery(HostDiscovery):
             if slots:
                 host_mapping[hostname] = slots
 
-
         if host_mapping and sum(host_mapping.values()) == 0:
             logger.info(f"Detected {len(host_mapping)} hosts, but no hosts "
                         "have available slots.")
