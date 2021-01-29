@@ -261,6 +261,19 @@ class ElasticRayExecutor:
 
         def worker_loop(slot_info, events):
             worker = self._create_remote_worker(slot_info, worker_env_vars)
+
+            # There is an odd edge case where a node can be removed
+            # before the remote worker is started, leading to a failure
+            # in trying to create the horovod mesh.
+            try:
+                ping = worker.execute.remote(lambda _ : 1)
+                ray.get(ping, timeout=10)
+            except Exception as e:
+                logger.exception(f"{slot_info.hostname}:{e}")
+                # Fail
+                result = 1, time.time()
+                return result
+
             future = worker.execute.remote(lambda _: worker_fn())
 
             result = None
