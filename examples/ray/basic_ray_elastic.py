@@ -244,6 +244,39 @@ class Net(nn.Module):
         return F.log_softmax(x)
 
 
+class Adjuster:
+    def __init__(self, optimizer):
+        self._current = [pg["lr"] for pg in optimizer.param_groups]
+
+    def configure(self, target, steps=20):
+        self._base = [pg["lr"] for pg in self.optimizer.param_groups]
+        self._current = self._base.copy()
+        self._target = target
+        self.steps = steps
+
+    def adjust(self):
+        new_lrs = []
+        adjusted = False
+        for base, cur_lr, target in zip(
+                self._base, self._current, self._target):
+            if cur_lr < target:
+                diff = (target - base) / self.steps
+                new_lrs.append(min(base + min(diff, 0.1 * base), target))
+                adjusted = True
+            else:
+                # if the target is less than current LR,
+                # we should immediately drop.
+                new_lrs.append(target)
+        self._current = new_lrs
+        for pg, new_lr in zip(self.optimizer.param_groups, self._current):
+            pg["lr"] = new_lr
+        return adjusted
+
+    @property
+    def current_lr(self):
+        return self._lr
+
+
 def run(large=False):
     hvd.init()
 
@@ -283,6 +316,8 @@ def run(large=False):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=200)
 
+    adjuster = Adjuster(scheduler=scheduler)
+
     # Restore from a previous checkpoint, if initial_epoch is specified.
     # Horovod: restore on the first worker which will broadcast
     # weights to other workers.
@@ -295,7 +330,8 @@ def run(large=False):
 
     def on_state_reset():
         # Horovod: scale the learning rate as controlled by the LR schedule
-        scheduler.base_lrs = [args.lr * hvd.size() for _ in scheduler.base_lrs]
+        adjuster.configure(
+            target=[args.lr * np.sqrt(hvd.size()) for _ in scheduler.base_lrs])
 
     state = hvd.elastic.TorchState(
         model=model,
@@ -303,6 +339,7 @@ def run(large=False):
         scheduler=scheduler,
         train_sampler=train_sampler,
         epoch=resume_from_epoch,
+        adjuster=adjuster,
         batch=0)
     state.register_reset_callbacks([on_state_reset])
 
@@ -310,7 +347,8 @@ def run(large=False):
     def full_train(state, train_loader):
         while state.epoch < args.epochs:
             train(state, train_loader)
-            state.scheduler.step()
+            if not adjuster.adjust_lr(state.scheduler):
+                state.scheduler.step()
             save_checkpoint(state)
             end_epoch(state)
 
