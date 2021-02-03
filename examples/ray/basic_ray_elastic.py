@@ -30,7 +30,7 @@ parser.add_argument(
 parser.add_argument(
     '--epochs', type=int, default=90, help='number of epochs to train')
 parser.add_argument(
-    '--lr', type=float, default=0.01, help='learning rate for a single GPU')
+    '--lr', type=float, default=0.1, help='learning rate for a single GPU')
 
 parser.add_argument(
     '--no-cuda',
@@ -83,7 +83,7 @@ def load_data_mnist():
                            ]))
     train_sampler = ElasticSampler(train_dataset)
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=8, sampler=train_sampler, **kwargs)
+        train_dataset, batch_size=128, sampler=train_sampler, **kwargs)
 
     return train_loader, train_sampler
 
@@ -109,12 +109,11 @@ class tqdm_callback:
 
         if reset:
             if self._progress_bar is not None:
-                self._progress_bar.reset(total=info["total"])
-            else:
-                epoch = self._current_epoch + 1
-                self._progress_bar = tqdm(
-                    total=info["total"],
-                    desc=f'[mode={tqdm_mode}] Epoch     #{epoch}')
+                self._progress_bar.close()
+            epoch = self._current_epoch + 1
+            self._progress_bar = tqdm(
+                total=info["total"],
+                desc=f'[mode={tqdm_mode}] Epoch     #{epoch}')
 
         scoped = {k: v for k, v in info.items() if k.startswith(tqdm_mode)}
         self._progress_bar.set_postfix(scoped)
@@ -224,12 +223,12 @@ class Net(nn.Module):
         self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
         self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
         self.conv2_drop = nn.Dropout2d()
-        self.fc1 = nn.Linear(320, 300)
+        self.fc1 = nn.Linear(320, 20)
         self.hiddens = []
         if large:
             self.hiddens = nn.ModuleList(
                 [nn.Linear(300, 300) for i in range(30)])
-        self.fc2 = nn.Linear(300, 10)
+        self.fc2 = nn.Linear(20, 10)
 
     def forward(self, x):
         x = F.relu(F.max_pool2d(self.conv1(x), 2))
@@ -245,11 +244,9 @@ class Net(nn.Module):
 
 
 class Adjuster:
-    def __init__(self, optimizer):
-        self._current = [pg["lr"] for pg in optimizer.param_groups]
-
-    def configure(self, target, steps=20):
-        self._base = [pg["lr"] for pg in self.optimizer.param_groups]
+    def configure(self, optimizer, target, steps=20):
+        self.optimizer = optimizer
+        self._base = [pg["lr"] for pg in optimizer.param_groups]
         self._current = self._base.copy()
         self._target = target
         self.steps = steps
@@ -316,8 +313,7 @@ def run(large=False):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=200)
 
-    adjuster = Adjuster(scheduler=scheduler)
-
+    adjuster = Adjuster()
     # Restore from a previous checkpoint, if initial_epoch is specified.
     # Horovod: restore on the first worker which will broadcast
     # weights to other workers.
@@ -330,8 +326,9 @@ def run(large=False):
 
     def on_state_reset():
         # Horovod: scale the learning rate as controlled by the LR schedule
-        adjuster.configure(
-            target=[args.lr * np.sqrt(hvd.size()) for _ in scheduler.base_lrs])
+        target = [args.lr * np.sqrt(hvd.size()) for _ in scheduler.base_lrs]
+        adjuster.configure(optimizer=optimizer, target=target)
+        scheduler.base_lrs = target.copy()
 
     state = hvd.elastic.TorchState(
         model=model,
@@ -347,8 +344,8 @@ def run(large=False):
     def full_train(state, train_loader):
         while state.epoch < args.epochs:
             train(state, train_loader)
-            if not adjuster.adjust_lr(state.scheduler):
-                state.scheduler.step()
+            # if not adjuster.adjust():
+            state.scheduler.step()
             save_checkpoint(state)
             end_epoch(state)
 
@@ -372,6 +369,6 @@ if __name__ == '__main__':
         settings, use_gpu=True, cpus_per_slot=1, override_discovery=False)
     executor.start()
     executor.run(
-        lambda: run(large=True),
+        lambda: run(large=False),
         callbacks=[tqdm_callback(),
                    TensorboardCallback(args.log_dir)])
