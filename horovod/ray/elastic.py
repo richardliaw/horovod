@@ -410,7 +410,7 @@ class ElasticRayExecutor:
             self.settings.num_proc,
             self._create_spawn_worker_fn(return_values, worker_fn, _queue))
 
-        def _process_calls(queue, callbacks):
+        def _process_calls(queue, callbacks, event):
             if not callbacks:
                 return
             while queue.actor:
@@ -418,13 +418,22 @@ class ElasticRayExecutor:
                     result = queue.get_nowait()
                     for c in callbacks:
                         c(result)
+                    # avoid slamming the CI
+                elif event.is_set():
+                    break
+                time.sleep(0.1)
 
-        _callback_thread = None
         try:
+            event = threading.Event()
             _callback_thread = threading.Thread(
-                target=_process_calls, args=(_queue, callbacks), daemon=True)
+                target=_process_calls,
+                args=(_queue, callbacks, event),
+                daemon=True)
             _callback_thread.start()
             res = self.driver.get_results()
+            event.set()
+            if _callback_thread:
+                _callback_thread.join(timeout=60)
         finally:
             if hasattr(_queue, "shutdown"):
                 _queue.shutdown()
@@ -433,8 +442,6 @@ class ElasticRayExecutor:
                 done, not_done = ray.wait([done_ref], timeout=5)
                 if not_done:
                     ray.kill(_queue.actor)
-            if _callback_thread:
-                _callback_thread.join()
         self.driver.stop()
 
         if res.error_message is not None:
